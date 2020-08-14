@@ -8,10 +8,10 @@ import json
 import numpy as np
 from svgpathtools import svg2paths
 from svg.path import parse_path
-from PIL import ImageFont, ImageDraw, Image
+from PIL import ImageFont, ImageDraw, Image, ImageChops
 
 from src.util.define_nodes import nodes
-
+from src.util.util import unicode_to_symbol
 import pdb
 
 leaf_node_list = ['mi', 'mo', 'mn']
@@ -46,7 +46,22 @@ def parse_svg(svg_str, path, config, label):
     return tree
 
 
-def get_box_info(path_string, offset_x, offset_y, h_offset, scale, scaling_factor, mask):
+def extract_char(im):
+    pixel = []
+    for x in range(im.shape[1]):
+        for y in range(im.shape[0]):
+            pix = im[x, y]
+            if pix == 0:
+                pixel.append([x, y])
+    min_x = min([i[0] for i in pixel]) - 2
+    max_x = max([i[0] for i in pixel]) + 2
+    min_y = min([i[1] for i in pixel]) - 2
+    max_y = max([i[1] for i in pixel]) + 2
+    crop_im = im[min_x:max_x, min_y:max_y]
+    return crop_im
+
+
+def get_box_info(path_string, offset_x, offset_y, h_offset, scale, scaling_factor, mask, math_font_Path, id):
     '''
 
     Args:
@@ -61,6 +76,11 @@ def get_box_info(path_string, offset_x, offset_y, h_offset, scale, scaling_facto
     Returns:
 
     '''
+    id = id.split('-')[-1]
+    try:
+        encoded_char = unicode_to_symbol(id)
+    except:
+        encoded_char = id
     contour = []
     for e in path_string:
         contour.append([[e.start.real, e.start.imag]])
@@ -69,10 +89,28 @@ def get_box_info(path_string, offset_x, offset_y, h_offset, scale, scaling_facto
     contour[:, :, 0] = contour[:, :, 0] * 1 + contour[:, :, 1] * 0 + 0 + offset_x
     contour[:, :, 1] = contour[:, :, 0] * 0 + contour[:, :, 1] * (-1) + 0 - h_offset - offset_y
     contour = contour.astype(int)
-    cv2.drawContours(mask, [contour], -1, 0, -1)
+    # cv2.drawContours(mask, [contour], -1, 0, -1)
     min_x, max_x = contour[:, :, 0].min(), contour[:, :, 0].max()
     min_y, max_y = contour[:, :, 1].min(), contour[:, :, 1].max()
+    box_h = max_y-min_y
+    box_w = max_x-min_x
     # cv2.rectangle(mask, (min_x, min_y), (max_x, max_y), 255, 2)
+    # img_pil = Image.fromarray(mask.astype(np.uint8))
+    blank = Image.new('L', (100, 100))
+    blank = ImageChops.constant(blank, 255)
+    draw = ImageDraw.Draw(blank)
+    font_size = 75 #int(884 * scaling_factor * scale)
+    font = ImageFont.truetype(math_font_Path, font_size)
+    w, h = draw.textsize(encoded_char, font=font)
+    draw.text(((100-w)/2, (100-h)/2), encoded_char, font=font, fill=0)
+    # draw.rectangle([(offset_x, offset_y),
+    #                 (offset_x + font_size, offset_y + font_size)], None, 255)
+    temp = np.array(blank)
+    black_im = extract_char(temp)
+    black_im = cv2.resize(black_im, (box_w, box_h))
+    if encoded_char == ':':
+        min_x = min_x + 10
+    mask[min_y:min_y+black_im.shape[0], min_x:min_x+black_im.shape[1]] = black_im
     return mask
 
 
@@ -142,6 +180,7 @@ def get_text_info(text_element, offset_x, offset_y, h_offset, scale, scaling_fac
     Returns:
 
     '''
+    h, w = mask.shape
     img_pil = Image.fromarray(mask.astype(np.uint8))
     draw = ImageDraw.Draw(img_pil)
     font_size = int(884 * scaling_factor * scale)
@@ -150,9 +189,9 @@ def get_text_info(text_element, offset_x, offset_y, h_offset, scale, scaling_fac
         offset_x, offset_y = int(offset_x), int(offset_y - h_offset)
     else:
         offset_x, offset_y = int(offset_x), int(offset_y)
-        if shift_char:
-            offset_y = int(offset_y - h_offset / 2)
-    draw.text((offset_x, offset_y), text_element, font=font, fill=0)
+        # if shift_char:
+        #     offset_y = int(offset_y - h_offset / 2)
+    draw.text((offset_x, h//2 - font_size//2), text_element, font=font, fill=0)
     # draw.rectangle([(offset_x, offset_y),
     #                 (offset_x + font_size, offset_y + font_size)], None, 255)
     mask = np.array(img_pil)
@@ -160,7 +199,7 @@ def get_text_info(text_element, offset_x, offset_y, h_offset, scale, scaling_fac
 
 
 def parse_elements(label, paths, offset_x, offset_y, scale, scaling_factor, h_offset, path_id_pair, mask, in_sub,
-                   in_frac, in_sqrt, in_one_arg, in_temp, chinese_font_path):
+                   in_frac, in_sqrt, in_one_arg, in_temp, chinese_font_path, math_font_Path):
     '''
 
     Args:
@@ -181,6 +220,8 @@ def parse_elements(label, paths, offset_x, offset_y, scale, scaling_factor, h_of
         chinese_font_path:
 
     Returns:
+    :param label:
+    :param math_font_Path:
 
     '''
     ind = 0
@@ -233,7 +274,7 @@ def parse_elements(label, paths, offset_x, offset_y, scale, scaling_factor, h_of
                             continue
                         mask = get_box_info(path_string, char_offset_x, char_offset_y, h_offset,
                                             scale,
-                                            scaling_factor, mask)
+                                            scaling_factor, mask, math_font_Path, id)
                         char_done = True
                     else:
                         if '\\frac' in label:
@@ -267,7 +308,7 @@ def parse_elements(label, paths, offset_x, offset_y, scale, scaling_factor, h_of
                                 mask = get_box_info(path_string, text_offset_x, text_offset_y,
                                                     h_offset,
                                                     scale,
-                                                    scaling_factor, mask)
+                                                    scaling_factor, mask, math_font_Path, text)
 
                             else:
                                 continue
@@ -300,7 +341,7 @@ def parse_elements(label, paths, offset_x, offset_y, scale, scaling_factor, h_of
                                               in_sub, in_frac,
                                               in_sqrt, in_one_arg,
                                               in_temp,
-                                              chinese_font_path)
+                                              chinese_font_path,math_font_Path)
                         if 'transform' in attr:
                             if 'translate' in attr['transform']:
                                 offset_x -= offset_x_sub * scale * scaling_factor
@@ -325,13 +366,13 @@ def parse_elements(label, paths, offset_x, offset_y, scale, scaling_factor, h_of
                                       scaling_factor, h_offset, path_id_pair, mask,
                                       in_sub,
                                       in_frac, in_sqrt,
-                                      in_one_arg, in_temp, chinese_font_path)
+                                      in_one_arg, in_temp, chinese_font_path, math_font_Path)
                 mask = parse_elements(sub_svg_node[:-1], offset_x,
                                       offset_y, scale,
                                       scaling_factor, h_offset, path_id_pair, mask,
                                       in_sub,
                                       in_frac, in_sqrt,
-                                      in_one_arg, in_temp, chinese_font_path)
+                                      in_one_arg, in_temp, chinese_font_path, math_font_Path)
 
 
                 if 'transform' in attr:
@@ -360,7 +401,7 @@ def parse_elements(label, paths, offset_x, offset_y, scale, scaling_factor, h_of
                                       in_sub,
                                       in_frac,
                                       in_sqrt,
-                                      in_one_arg, in_temp, chinese_font_path)
+                                      in_one_arg, in_temp, chinese_font_path, math_font_Path)
                 rect_element = svg_node.find_all('rect')[-1]
                 mask = get_rect_info(rect_element, offset_x, offset_y, h_offset, scale,
                                      scaling_factor, mask)
@@ -371,7 +412,7 @@ def parse_elements(label, paths, offset_x, offset_y, scale, scaling_factor, h_of
                                       in_sub,
                                       in_frac,
                                       in_sqrt,
-                                      in_one_arg, in_temp, chinese_font_path)
+                                      in_one_arg, in_temp, chinese_font_path, math_font_Path)
 
 
                 if 'transform' in attr:
@@ -398,7 +439,7 @@ def parse_elements(label, paths, offset_x, offset_y, scale, scaling_factor, h_of
                                       in_sub,
                                       in_frac, in_sqrt,
                                       in_one_arg, in_temp,
-                                      chinese_font_path)
+                                      chinese_font_path, math_font_Path)
 
                 if attr['data-mml-node'] == 'mroot':
                     mask = parse_elements(label, [sub_svg_node[-2]], offset_x,
@@ -407,7 +448,7 @@ def parse_elements(label, paths, offset_x, offset_y, scale, scaling_factor, h_of
                                           scaling_factor, h_offset, path_id_pair, mask,
                                           in_sub,
                                           in_frac, in_sqrt,
-                                          in_one_arg, in_temp, chinese_font_path)
+                                          in_one_arg, in_temp, chinese_font_path, math_font_Path)
 
                     mask = parse_elements(label, sub_svg_node[:-2],
                                           offset_x,
@@ -417,7 +458,7 @@ def parse_elements(label, paths, offset_x, offset_y, scale, scaling_factor, h_of
                                           mask, in_sub,
                                           in_frac, in_sqrt,
                                           in_one_arg, in_temp,
-                                          chinese_font_path)
+                                          chinese_font_path, math_font_Path)
                 else:
                     mask = parse_elements(label, sub_svg_node[:-1],
                                           offset_x,
@@ -427,7 +468,7 @@ def parse_elements(label, paths, offset_x, offset_y, scale, scaling_factor, h_of
                                           mask, in_sub,
                                           in_frac, in_sqrt,
                                           in_one_arg, in_temp,
-                                          chinese_font_path)
+                                          chinese_font_path, math_font_Path)
 
                 in_sqrt -= 1
                 rect_element = svg_node.find_all('rect')[-1]
@@ -460,7 +501,7 @@ def parse_elements(label, paths, offset_x, offset_y, scale, scaling_factor, h_of
                                       in_sub,
                                       in_frac, in_sqrt,
                                       in_one_arg, in_temp,
-                                      chinese_font_path)
+                                      chinese_font_path, math_font_Path)
 
                 if attr['data-mml-node'] == 'msubsup':
                     sup_ele = len(sub_svg_node[1].find_all('g'))
@@ -474,7 +515,7 @@ def parse_elements(label, paths, offset_x, offset_y, scale, scaling_factor, h_of
                                           in_sub,
                                           in_frac, in_sqrt,
                                           in_one_arg, in_temp,
-                                          chinese_font_path)
+                                          chinese_font_path, math_font_Path)
 
                     mask = parse_elements(label,
                                           sub_svg_node[sup_ele + 2:],
@@ -486,7 +527,7 @@ def parse_elements(label, paths, offset_x, offset_y, scale, scaling_factor, h_of
                                           in_sub,
                                           in_frac, in_sqrt,
                                           in_one_arg, in_temp,
-                                          chinese_font_path)
+                                          chinese_font_path, math_font_Path)
 
                 else:
                     mask = parse_elements(label, sub_svg_node[1:],
@@ -498,7 +539,7 @@ def parse_elements(label, paths, offset_x, offset_y, scale, scaling_factor, h_of
                                           in_sub,
                                           in_frac, in_sqrt,
                                           in_one_arg, in_temp,
-                                          chinese_font_path)
+                                          chinese_font_path, math_font_Path)
 
                 if 'transform' in attr:
                     if 'translate' in attr['transform']:
@@ -530,6 +571,7 @@ def extract_trajectories(label, svg2xml, scaling_factor, path, config):
     :return: information's extracted from svg to inference the image
     '''
     chinese_font_path = config.CHINESE_FONT_PATH
+    math_font_Path = config.MATH_FONT_PATH
     offset_x = 0.0
     offset_y = 0.0
     scale = 1
@@ -557,6 +599,6 @@ def extract_trajectories(label, svg2xml, scaling_factor, path, config):
                           path_id_pair, mask, in_sub, in_frac, in_sqrt,
                           in_one_arg,
                           in_temp,
-                          chinese_font_path)
+                          chinese_font_path, math_font_Path)
     cv2.imwrite(join(config.OUT_SVG_IMAGE_PATH, '{}.png'.format(path.split('/')[-1].split('.')[0])), mask)
     return mask

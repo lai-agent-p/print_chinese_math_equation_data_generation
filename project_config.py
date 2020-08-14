@@ -11,6 +11,8 @@ class ProjectConfig:
     SVG_PATH = join(CONFIG_PATH, 'svg_out')
 
     CHINESE_FONT_PATH = join(CONFIG_PATH, 'src/util/simsun.ttc')
+    MATH_FONT_PATH = join(CONFIG_PATH, 'src/util/cambria.ttc')
+    # MATH_FONT_PATH = join(CONFIG_PATH, 'src/util/ASANA.TTC')
 
     IM_FOLDERS_PATH = join(DATA_PATH, 'characters')
     CROHME_IM_FOLDERS_PATH = join(DATA_PATH, 'crohme_data')
@@ -48,7 +50,7 @@ class ProjectConfig:
     OUT_JSON_PATH = 'result/json'
     im_side = 64
     # SCALING_FACTOR = 0.1335
-    SCALING_FACTOR = 0.04
+    SCALING_FACTOR = 0.05
 
     ascill_latex_pair = [('~', '\\sim'),
                         ('÷', '\\div'),
